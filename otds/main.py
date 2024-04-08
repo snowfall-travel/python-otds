@@ -44,7 +44,7 @@ class OTDS:
         self._defined_components: dict[t.Key, t.DefineComponent] = {}
         self._flights: t.Flights = {}
         self._products: t.Products = {"product": {}}
-        self._accommodations_price_items: dict[t.Key, dict[t.Token, tuple[t.PriceItem]]] = {}
+        self._accommodations_price_items: dict[t.Key, dict[t.Token, tuple[t.PriceItem, ...]]] = {}
 
     def parse(self, path: Path) -> None:
         xml = validate(path, ROOT_PATH / "schema" / "xsd" / "otds.xsd")
@@ -1050,7 +1050,7 @@ class OTDS:
                 raise NotImplementedError(elem.tag)
         price_dict.setdefault(t.Token(price_item.attrib["Class"]), []).append(p)
 
-    def parse_price_items(self, price_items: etree._Element, prices_dict: dict[t.Key, dict[t.Token, tuple[t.PriceItem]]]) -> None:
+    def parse_price_items(self, price_items: etree._Element, prices_dict: dict[t.Key, dict[t.Token, tuple[t.PriceItem, ...]]]) -> None:
         update_mode = self.get_update_mode(price_items)
         assert update_mode is not e.UpdateMode.Merge
         if update_mode is not e.UpdateMode.New:
