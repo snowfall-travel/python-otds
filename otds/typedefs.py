@@ -29,8 +29,8 @@ SimpleNodeIataAirportCode = NewType("SimpleNodeIataAirportCode", str)
 SourceAttribute = NewType("SourceAttribute", str)
 StringSlice = NewType("StringSlice", tuple[int, int | None])
 
-_AbsoluteConditionAppliedBy = tuple[Literal[e.Absolute.AppliedBy], tuple[SourceAttribute, int | Literal[e.X.x]]]
-_AbsoluteConditionDayBase = tuple[Literal[e.Absolute.DayBase], str]
+_AbsoluteConditionAppliedBy = tuple[Literal[e.Absolute.AppliedBy], str]
+_AbsoluteConditionDayBase = tuple[Literal[e.Absolute.DayBase], tuple[SourceAttribute, int | Literal[e.X.x]]]
 _AbsoluteConditionPersonBase = tuple[Literal[e.Absolute.PersonBase], int]
 AbsoluteCondition = _AbsoluteConditionAppliedBy | _AbsoluteConditionDayBase | _AbsoluteConditionPersonBase
 
@@ -77,7 +77,7 @@ PersonImpact = _PersonImpactAge | _PersonImpactIndex | _PersonImpactGender
 
 _ConditionAndOr = tuple[Literal[e.Condition.And, e.Condition.Or], tuple["ConditionGroup", ...]]
 _ConditionNot = tuple[Literal[e.Condition.Not], "ConditionGroup"]
-_ConditionAirports = tuple[Literal[e.Condition.Airports], tuple[SourceAttribute, e.AirportType, str]]
+_ConditionAirports = tuple[Literal[e.Condition.Airports], tuple[SourceAttribute, e.AirportType, tuple[str, ...]]]
 _ConditionBookingDateOffset = tuple[Literal[e.Condition.BookingDateOffset], tuple[SourceAttribute, BookingOffsetCondition]]
 _ConditionConditionalTags = tuple[Literal[e.Condition.ConditionalTags], tuple[SourceAttribute, Token, tuple[str, ...]]]
 _ConditionDate = tuple[Literal[e.Condition.Date], tuple[e.DayType, SourceAttribute, DateCondition]]
@@ -149,11 +149,11 @@ RuleOnewayFlightComponent = tuple[Name, DayAllocationIndex, DayAllocationLevel]
 RuleSellingAccomComponent = tuple[Name, DayAllocationIndex]
 RuleCombiComponent = tuple[e.Role, Name, DayAllocationIndex, tuple[RuleDefinedComponent, ...]]
 
-_ComponentAccomodation = tuple[Literal[e.Component.Accommodation], RuleSellingAccomComponent]
+_ComponentAccommodation = tuple[Literal[e.Component.Accommodation], tuple[RuleSellingAccomComponent, ...]]
 _ComponentCombiComponent = tuple[Literal[e.Component.CombiComponent], RuleCombiComponent]
 _ComponentDefinedComponent = tuple[Literal[e.Component.DefinedComponent], RuleDefinedComponent]
 _ComponentOnewayFlight = tuple[Literal[e.Component.OnewayFlight], RuleOnewayFlightComponent]
-Component = _ComponentAccomodation | _ComponentCombiComponent | _ComponentDefinedComponent | _ComponentOnewayFlight
+Component = _ComponentAccommodation | _ComponentCombiComponent | _ComponentDefinedComponent | _ComponentOnewayFlight
 
 _TagsDict = Mapping[Token, tuple[str, ConditionGroup | None]]
 TagsDict = Mapping[Key, _TagsDict]
@@ -192,7 +192,7 @@ class Property(TypedDict, total=False):
     address: Address
     board_name: LanguageText
     board_type: e.BoardType
-    city: LanguageText
+    city: tuple[LanguageText, ...]
     condition: ConditionGroup
     included_services: tuple[e.GeneralIncludedService, ...]
     info: AccommodationInfo
