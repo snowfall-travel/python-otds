@@ -46,7 +46,7 @@ class DateCondition(TypedDict, total=False):
     dates: tuple[datetime.date, ...]
 
 _DayImpactDate = tuple[Literal[e.DayImpact.Date], tuple[e.DayType, SourceAttribute, DateCondition]]
-_DayImpactDayIndex = tuple[Literal[e.DayImpact.DayIndex], tuple[SourceAttribute, tuple[e.DayIndex, int]]]
+_DayImpactDayIndex = tuple[Literal[e.DayImpact.DayIndex], tuple[SourceAttribute, tuple[tuple[e.DayIndex, int], ...]]]
 DayImpact = _DayImpactDate | _DayImpactDayIndex
 
 class DurationCondition(TypedDict, total=False):
@@ -223,7 +223,7 @@ class SellingAccom(TypedDict, total=False):
     board: Mapping[Key, Board]
     booking: tuple[BookingGroup, ...]
     filter: Mapping[Key, ConditionGroup]
-    price_items: Mapping[Key, Mapping[Token, tuple[PriceItem]]]
+    price_items: Mapping[Key, Mapping[Token, tuple[PriceItem, ...]]]
     tags: TagsDict
     unit: Mapping[Key, Unit]
 

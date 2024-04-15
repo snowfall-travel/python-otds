@@ -5,7 +5,7 @@ from collections.abc import MutableSequence
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType as MPT
-from typing import Literal, overload
+from typing import Literal, Mapping, overload
 
 from lxml import etree
 
@@ -1377,14 +1377,15 @@ class OTDS:
     def parse_tag(self, tag: etree._Element) -> tuple[t.Token, str]:
         if tag.get("TagValueType", "String") != "String":
             raise NotImplementedError()
+        assert tag.text
         return (t.Token(tag.attrib["Class"]), tag.text)
 
-    def parse_tags(self, tags: etree._Element, tags_dict: t.TagsDict) -> None:
+    def parse_tags(self, tags: etree._Element, tags_dict: dict[t.Key, Mapping[t.Token, tuple[str, t.ConditionGroup | None]]]) -> None:
         update_mode = self.get_update_mode(tags)
         assert update_mode is not e.UpdateMode.Merge
         if update_mode is not e.UpdateMode.New:
             raise NotImplementedError()
-        tags_: t._TagsDict = {}  # TODO(OTDS2+): Key must exist
+        tags_: dict[t.Token, tuple[str, t.ConditionGroup | None]] = {}  # TODO(OTDS2+): Key must exist
         for elem in tags.iterchildren():
             if elem.tag == f"{PREFIX}Tag":
                 k, v = self.parse_tag(elem)
@@ -1395,7 +1396,7 @@ class OTDS:
             else:
                 assert False
         key = t.Key(tags.get("Key", "default"))
-        tags_dict[key] = tags_
+        tags_dict[key] = MPT(tags_)
 
     def parse_unit(self, unit: etree._Element, unit_dict: dict[t.Key, t.Unit]) -> None:
         update_mode = self.get_update_mode(unit)
