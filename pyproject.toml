@@ -19,3 +19,6 @@ classifiers = [
 [project.urls]
 Homepage = "https://github.com/snowfall-travel/python-otds"
 Issues = "https://github.com/snowfall-travel/python-otds/issues"
+
+[tool.setuptools]
+packages = ["otds"]
