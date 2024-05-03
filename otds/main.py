@@ -1195,7 +1195,7 @@ class OTDS:
                 value = [int(i) for i in elem.text.strip().split(".")]
                 if len(value) == 1:
                     value.append(0)
-                property["operator_category"] = tuple(elem.text)  # type: ignore[typeddict-item]
+                property["operator_category"] = tuple(value)  # type: ignore[typeddict-item]
             elif elem.tag == f"{PREFIX}AccommodationAddress":
                 self.parse_address(elem, property.setdefault("address", {}))
             elif elem.tag == f"{PREFIX}BoardName":
