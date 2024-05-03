@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=46"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "otds"
+version = "0.0.1"
+description = "A typed parser for OTDS"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Development Status :: 2 - Pre-Alpha"
+]
+
+[project.urls]
+Homepage = "https://github.com/snowfall-travel/python-otds"
+Issues = "https://github.com/snowfall-travel/python-otds/issues"
