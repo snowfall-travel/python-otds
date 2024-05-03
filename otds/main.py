@@ -47,7 +47,7 @@ class OTDS:
         self._accommodations_price_items: dict[t.Key, dict[t.Token, tuple[t.PriceItem, ...]]] = {}
 
     def parse(self, path: Path) -> None:
-        xml = validate(path, ROOT_PATH / "schema" / "xsd" / "otds.xsd")
+        xml = validate(path, ROOT_PATH / "schema" / "otds.xsd")
         otds = xml.getroot()
         update_mode = self.get_update_mode(otds)
         if update_mode is e.UpdateMode.New:
