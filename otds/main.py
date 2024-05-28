@@ -13,7 +13,6 @@ from . import enums as e
 from . import typedefs as t
 
 ROOT_PATH = Path(__file__).parent.parent
-DATA_PATH = Path.home() / "Downloads" / "otds_big_debug"
 NS = MPT({None: "http://otds-group.org/otds"})
 PREFIX = "{http://otds-group.org/otds}"
 
@@ -45,6 +44,10 @@ class OTDS:
         self._flights: t.Flights = {}
         self._products: t.Products = {"product": {}}
         self._accommodations_price_items: dict[t.Key, dict[t.Token, tuple[t.PriceItem, ...]]] = {}
+
+    @property
+    def accommodations(self) -> MPT[t.Key, t.Accommodation]:
+        return MPT(self._accommodations)
 
     def parse(self, path: Path) -> None:
         xml = validate(path, ROOT_PATH / "schema" / "otds.xsd")
@@ -1418,11 +1421,3 @@ class OTDS:
 
     def get_update_mode(self, elem: etree._Element) -> e.UpdateMode:
         return e.UpdateMode(elem.get("UpdateMode", "New"))
-
-otds = OTDS()
-otds.parse(ROOT_PATH / "001_basis.xml")
-otds.parse(ROOT_PATH / "acc-test.xml")
-
-import pprint
-#with open("acc-output.json", "w") as f:
-#    pprint.pprint(otds._accommodations, stream=f, compact=True, width=120)
