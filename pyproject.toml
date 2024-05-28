@@ -4,8 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "otds"
-version = "0.0.1"
+dependencies = ["lxml>=5,<6"]
 description = "A typed parser for OTDS"
+dynamic = ["version"]
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
@@ -22,3 +23,6 @@ Issues = "https://github.com/snowfall-travel/python-otds/issues"
 
 [tool.setuptools]
 packages = ["otds"]
+
+[tool.setuptools.dynamic]
+version = {attr = "otds.__version__"}
