@@ -263,8 +263,8 @@ class GlobalValue(TypedDict):
 
 class OccupancyPerson(TypedDict, total=False):
     count: int
-    max_age: PersonAge
-    min_age: PersonAge
+    max_age: Age
+    min_age: Age
 
 class Product(TypedDict, total=False):
     components: Required[tuple[Component, ...]]
