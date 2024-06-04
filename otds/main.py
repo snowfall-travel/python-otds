@@ -12,7 +12,7 @@ from lxml import etree
 from . import enums as e
 from . import typedefs as t
 
-ROOT_PATH = Path(__file__).parent.parent
+ROOT_PATH = Path(__file__).parent
 NS = MPT({None: "http://otds-group.org/otds"})
 PREFIX = "{http://otds-group.org/otds}"
 
