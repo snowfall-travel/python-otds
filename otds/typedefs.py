@@ -1,7 +1,8 @@
 import datetime
 from collections.abc import Mapping
 from decimal import Decimal
-from typing import Literal, NewType, Required, TypeAlias, TypedDict
+from typing import Literal, NewType, TypeAlias, TypedDict
+from typing_extensions import Required
 
 from . import enums as e
 
