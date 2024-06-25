@@ -17,7 +17,7 @@ NS = MPT({None: "http://otds-group.org/otds"})
 PREFIX = "{http://otds-group.org/otds}"
 
 def validate(xml_path: Path, xsd_path: Path) -> etree._ElementTree:
-    xml_doc = etree.parse(xml_path)
+    xml_doc = etree.parse(xml_path, etree.XMLParser(remove_comments=True))
 
     if __debug__:
         xmlschema_doc = etree.parse(xsd_path)
@@ -142,23 +142,29 @@ class OTDS:
             elif elem.tag == f"{PREFIX}Phone":
                 assert elem.text
                 addr_dict["phone"] = elem.text
+            elif elem.tag == f"{PREFIX}Fax":
+                assert elem.text
+                addr_dict["fax"] = elem.text
             elif elem.tag == f"{PREFIX}GeoInfo":
                 self.parse_geoinfo(elem, addr_dict.setdefault("geo", {}))
             else:
-                raise NotImplementedError()
+                raise NotImplementedError(elem.tag)
 
-    def parse_age_condition(self, person_age: etree._Element) -> tuple[t.SourceAttribute, t.PersonAge]:
+    def parse_age_condition(self, person_age: etree._Element) -> tuple[t.SourceAttribute, t.AgeCondition]:
         if person_age.get("DayAllocation") is not None:
             raise NotImplementedError()
         if person_age.get("EvaluationMode", "Any") != "Any":
             raise NotImplementedError()
         src = t.SourceAttribute(person_age.attrib["Source"])
 
-        conds: t.PersonAge = {}
+        conds: t.AgeCondition = {}
         for elem in person_age.iterchildren():
             if elem.tag == f"{PREFIX}Max":
                 assert elem.text
                 conds["max"] = int(elem.text)
+            elif elem.tag == f"{PREFIX}Min":
+                assert elem.text
+                conds["min"] = int(elem.text)
             else:
                 raise NotImplementedError(elem.tag)
         return (src, conds)
@@ -210,6 +216,24 @@ class OTDS:
         key = t.Key(availability.attrib["Key"])
         avail_dict[key] = (start, end, default, MPT(state))
 
+    def parse_baggage_allowance(self, baggage_allowances: etree._Element) -> MPT[e.BaggageType, t.Baggage]:
+        allowance: t.Baggage = {}
+        for bag_elem in baggage_allowances.iterchildren():
+            assert bag_elem.tag == f"{PREFIX}BaggageAllowance"
+            baggage_type = e.BaggageType(bag_elem.get("BaggageType", "Checked"))
+            assert baggage_type not in allowance
+            allowance[baggage_type] = {}
+            for elem in bag_elem.iterchildren():
+                if elem.tag == f"{PREFIX}Pieces":
+                    allowance[baggage_type]["pieces"] = int(elem.text)
+                elif elem.tag == f"{PREFIX}Weight":
+                    allowance[baggage_type]["weight"] = (float(elem.text), elem.get("Unit"))
+                elif elem.tag == f"{PREFIX}Size":
+                    raise NotImplementedError()
+                else:
+                    assert False
+        return MPT(allowance)
+
     def parse_board(self, board: etree._Element, board_dict: dict[t.Key, t.Board]) -> None:
         update_mode = self.get_update_mode(board)
         if update_mode is not e.UpdateMode.New:
@@ -223,6 +247,8 @@ class OTDS:
                 b["booking"] = self.parse_booking(elem)
             elif elem.tag == f"{PREFIX}Properties":
                 self.parse_properties(elem, b.setdefault("properties", {}))
+            elif elem.tag == f"{PREFIX}PriceItems":
+                self.parse_price_items(elem, b.setdefault("price_items", {}))
             else:
                 raise NotImplementedError(elem.tag)
         key = t.Key(board.attrib["Key"])
@@ -251,20 +277,43 @@ class OTDS:
         for elem in booking_class.iterchildren():
             if elem.tag == f"{PREFIX}Availabilities":
                 self.parse_availabilities(elem, booking.setdefault("availabilities", {}))
+            elif elem.tag == f"{PREFIX}Tags":
+                self.parse_tags(elem, booking.setdefault("tags", {}))
+            elif elem.tag == f"{PREFIX}Booking":
+                booking["booking"] = self.parse_booking(elem)
+            elif elem.tag == f"{PREFIX}Occupancy":
+                self.parse_occupancy(elem, booking.setdefault("occupancy", {}))
+            elif elem.tag == f"{PREFIX}PriceItems":
+                self.parse_price_items(elem, booking.setdefault("price_items", {}))
+            elif elem.tag == f"{PREFIX}Properties":
+                self.parse_properties(elem, booking.setdefault("properties", {}))
             else:
                 raise NotImplementedError(elem.tag)
         key = t.Key(booking_class.attrib["Key"])
         booking_dict[key] = MPT(booking)
 
+    def parse_booking_date_condition(self, booking_date: etree._Element) -> tuple[t.SourceAttribute, t.BookingDateCondition]:
+        source = t.SourceAttribute(booking_date.attrib["Source"])
+        conds: t.BookingDateCondition = {}
+        for elem in booking_date.iterchildren():
+            if elem.tag == f"{PREFIX}Min":
+                assert elem.text
+                conds["min"] = datetime.date.fromisoformat(elem.text)
+            elif elem.tag == f"{PREFIX}Max":
+                assert elem.text
+                conds["max"] = datetime.date.fromisoformat(elem.text)
+            else:
+                raise NotImplementedError(elem.tag)
+        return (source, conds)
+
     def parse_booking_group(self, booking_group: etree._Element) -> t.BookingGroup:
-        if booking_group.get("Priority", 0) != 0:
-            raise NotImplementedError()
         if booking_group.get("Class") is not None:
             raise NotImplementedError()
         _base = booking_group.get("EvaluationBase")
         eval_base = None if _base is None else e.EvaluationBase(_base)
         area = e.BookingGroupArea(booking_group.attrib["Area"])
         source = t.SourceAttribute(booking_group.get("Source", "ThisComponent"))
+        priority = int(booking_group.get("Priority", 0))
         conds: list[t.BookingGroupCondition] = []
         for elem in booking_group.iterchildren():
             if elem.tag == f"{PREFIX}BookingParameter":
@@ -275,7 +324,7 @@ class OTDS:
                 conds.append((e.BookingGroup.Condition, cond_group[0]))
             else:
                 raise NotImplementedError(elem.tag)
-        return (area, source, tuple(conds), eval_base)
+        return (area, source, tuple(conds), eval_base, priority)
 
     def parse_booking_offset_condition(self, date_offset: etree._Element) -> tuple[t.SourceAttribute, t.BookingOffsetCondition]:
         source = t.SourceAttribute(date_offset.attrib["Source"])
@@ -393,9 +442,20 @@ class OTDS:
                 if elem.get("Source") is not None:
                     raise NotImplementedError()
                 group = t.Identifier(elem.get("Group", "Default"))
-                conds.append((e.CombinableWhen.Code, group))
+                assert elem.text
+                conds.append((e.CombinableWhen.Code, group, t.Identifier(elem.text)))
+            elif elem.tag == f"{PREFIX}CombinationIndexMin":
+                if elem.get("Component") is not None:
+                    raise NotImplementedError()
+                if elem.get("Source") is not None:
+                    raise NotImplementedError()
+                group = t.Identifier(elem.get("Group", "Default"))
+                assert elem.text
+                conds.append((e.CombinableWhen.IndexMin, group, int(elem.text)))
             elif elem.tag == f"{PREFIX}Or":
                 conds.append((e.CombinableWhen.Or, self.parse_combinable_when(elem, _multi=True)))
+            elif elem.tag == f"{PREFIX}Not":
+                conds.append((e.CombinableWhen.Not, self.parse_combinable_when(elem, _multi=True)))
             else:
                 raise NotImplementedError(elem.tag)
         assert conds
@@ -416,6 +476,10 @@ class OTDS:
             elif elem.tag == f"{PREFIX}CombinationLevel":
                 assert elem.text
                 c["level"] = int(elem.text)
+            elif elem.tag == f"{PREFIX}CombinationIndex":
+                group = t.Identifier(elem.get("Group", "Default"))
+                assert elem.text
+                c["index"] = (group, int(elem.text))
             elif elem.tag == f"{PREFIX}CombinableWhen":
                 c["when"] = self.parse_combinable_when(elem)
             else:
@@ -464,6 +528,8 @@ class OTDS:
                 cond.append((e.Condition.Not, not_cond[0]))
             elif elem.tag == f"{PREFIX}Airports":
                 cond.append((e.Condition.Airports, self.parse_airport_condition(elem)))
+            elif elem.tag == f"{PREFIX}BookingDate":
+                cond.append((e.Condition.BookingDate, self.parse_booking_date_condition(elem)))
             elif elem.tag == f"{PREFIX}BookingDateOffset":
                 cond.append((e.Condition.BookingDateOffset, self.parse_booking_offset_condition(elem)))
             elif elem.tag == f"{PREFIX}ConditionalTags":
@@ -484,10 +550,14 @@ class OTDS:
                 cond.append((e.Condition.MatchEqual, self.parse_match(elem)))
             elif elem.tag == f"{PREFIX}PersonCount":
                 cond.append((e.Condition.PersonCount, self.parse_person_count_condition(elem)))
+            elif elem.tag == f"{PREFIX}PersonGroup":
+                cond.append((e.Condition.PersonGroup, self.parse_occupancy_condition(elem)))
             elif elem.tag == f"{PREFIX}PersonImpact":
                 cond.append((e.Condition.PersonImpact, self.parse_person_impact(elem)))
             elif elem.tag == f"{PREFIX}Tags":
                 cond.append((e.Condition.Tags, self.parse_tag_condition(elem)))
+            elif elem.tag == f"{PREFIX}Weekdays":
+                cond.append((e.Condition.Weekdays, self.parse_weekday_condition(elem)))
             else:
                 raise NotImplementedError(elem.tag)
         return tuple(cond)
@@ -582,16 +652,17 @@ class OTDS:
                 return (e.DayImpact.Date, self.parse_date_condition(elem))
             elif elem.tag == f"{PREFIX}DayIndex":
                 return (e.DayImpact.DayIndex, self.parse_day_index_condition(elem))
+            elif elem.tag == f"{PREFIX}Weekdays":
+                return (e.DayImpact.Weekdays, self.parse_weekday_condition(elem))
             else:
-                raise NotImplementedError()
+                raise NotImplementedError(elem.tag)
         assert False
 
-    def parse_day_index_condition(self, day_index: etree._Element) -> tuple[t.SourceAttribute, tuple[tuple[e.DayIndex, int], ...]]:
-        if day_index.get("Repeat") is not None:
-            raise NotImplementedError()
+    def parse_day_index_condition(self, day_index: etree._Element) -> tuple[t.SourceAttribute, tuple[tuple[e.DayIndex, int], ...], int | None]:
         if day_index.get("IntervalType", "Stay") != "Stay":
             raise NotImplementedError()
         src = t.SourceAttribute(day_index.attrib["Source"])
+        repeat = int(day_index.attrib["Repeat"]) if "Repeat" in day_index.attrib else None
 
         conds = []
         for elem in day_index.iterchildren():
@@ -601,28 +672,45 @@ class OTDS:
             elif elem.tag == f"{PREFIX}Until":
                 assert elem.text
                 conds.append((e.DayIndex.Until, int(elem.text)))
+            elif elem.tag == f"{PREFIX}From":
+                assert elem.text
+                conds.append((e.DayIndex.From, int(elem.text)))
             else:
                 raise NotImplementedError(elem.tag)
-        return (src, tuple(conds))
+        return (src, tuple(conds), repeat)
 
-    def parse_day_state(self, day_state: etree._Element, state_dict: dict[t.Key, tuple[t.Offset, t.DayState]]) -> None:
+    def parse_day_state(self, day_state: etree._Element, state_dict: dict[t.Key, tuple[t.Offset, t.DayState, e.AvailabilityState | Literal[False] | None, e.AvailabilityState | Literal[False] | None]]) -> None:
         update_mode = self.get_update_mode(day_state)
         assert update_mode is not e.UpdateMode.Merge
         if update_mode is not e.UpdateMode.New:
             raise NotImplementedError()
 
         state: t.DayState | None = None
+        checkin: e.AvailabilityState | Literal[False] | None = None
+        checkout: e.AvailabilityState | Literal[False] | None = None
         for elem in day_state.iterchildren():
             if elem.tag == f"{PREFIX}Closed":
                 state = (e.DayState.Closed,)
             elif elem.tag == f"{PREFIX}Open":
                 state = (e.DayState.Open, t.AvailabilityOpen(int(elem.text)) if elem.text else None)
+            elif elem.tag == f"{PREFIX}Request":
+                state = (e.DayState.Request, t.AvailabilityRequest(int(elem.text)) if elem.text else None)
+            elif elem.tag == f"{PREFIX}CheckIn":
+                checkin = e.AvailabilityState(elem.get("State", "Open"))
+            elif elem.tag == f"{PREFIX}NoCheckIn":
+                checkin = False
+            elif elem.tag == f"{PREFIX}CheckOut":
+                if elem.text:
+                    raise NotImplementedError()
+                checkout = e.AvailabilityState(elem.get("State", "Open"))
+            elif elem.tag == f"{PREFIX}NoCheckOut":
+                checkout = False
             else:
                 raise NotImplementedError(elem.tag)
         assert state is not None
         key = t.Key(day_state.attrib["Key"])
         offset = t.Offset(int(day_state.attrib["Offset"]))
-        state_dict[key] = (offset, state)
+        state_dict[key] = (offset, state, checkin, checkout)
 
     def parse_default_day_state(self, default_day_state: etree._Element) -> tuple[t.DefaultDayState, t.DefaultDayStateExtra]:
         update_mode = self.get_update_mode(default_day_state)
@@ -641,6 +729,8 @@ class OTDS:
                 if elem.get("State", "Open") != "Open":
                     raise NotImplementedError()
                 extra["check_out"] = t.AvailabilityRequest(int(elem.text)) if elem.text else None
+            elif elem.tag == f"{PREFIX}Request":
+                state = (e.DefaultDayState.Request, t.AvailabilityRequest(int(elem.text)) if elem.text else None)
             else:
                 raise NotImplementedError(elem.tag)
         assert state is not None
@@ -697,9 +787,21 @@ class OTDS:
             elif elem.tag == f"{PREFIX}Durations":
                 assert elem.text
                 conds["durations"] = tuple(int(x) for x in elem.text.split())
+            elif elem.tag == f"{PREFIX}MultiplesOf":
+                assert elem.text
+                conds["multiples"] = int(elem.text)
             else:
                 raise NotImplementedError(elem.tag)
         return (source, conds)
+
+    def parse_empty_key_condition(self, key: etree._Element) -> tuple[t.SourceAttribute]:
+        if key.get("DayAllocation", "All") != "All":  # Do not understand: The Default is "All" if the condition is not one of the following:
+            raise NotImplementedError()
+        if key.get("EvaluationMode", "Any") != "Any":
+            raise NotImplementedError()
+
+        src = t.SourceAttribute(key.attrib["Source"])
+        return (src,)
 
     def parse_empty_tag_condition(self, tag: etree._Element) -> tuple[t.SourceAttribute, t.Token]:
         if tag.get("DayAllocation", "All") != "All":  # Do not understand: The Default is "All" if the condition is not one of the following:
@@ -834,6 +936,8 @@ class OTDS:
                 elems.append((e.Match.Element, self.parse_match_element(elem)))
             elif elem.tag == f"{PREFIX}Tag":
                 elems.append((e.Match.Tag, self.parse_empty_tag_condition(elem)))
+            elif elem.tag == f"{PREFIX}Key":
+                elems.append((e.Match.Key, self.parse_empty_key_condition(elem)))
             else:
                 raise NotImplementedError(elem.tag)
         assert len(elems) >= 2
@@ -848,6 +952,26 @@ class OTDS:
         src = t.SourceAttribute(element.attrib["Source"])
         return (e.MatchElement(element.text), src)
 
+    def parse_neighbour_component_correction(self, neighbour: etree._Element, corrections: dict[t.Key, t.NeighbourComponentCorrection]) -> None:
+        update_mode = self.get_update_mode(neighbour)
+        assert update_mode is not e.UpdateMode.Merge
+        if update_mode is not e.UpdateMode.New:
+            raise NotImplementedError()
+
+        correction: t.NeighbourComponentCorrection = {}
+        for elem in neighbour.iterchildren():
+            if elem.tag == f"{PREFIX}CheckInDateOffset":
+                comp = e.ComponentAttribute(elem.attrib["Component"]) if "Component" in elem.attrib else None
+                correction["check_in_offset"] = (t.CheckInOutOffset(int(elem.text)), comp)
+            elif elem.tag == f"{PREFIX}CheckOutDateOffset":
+                comp = e.ComponentAttribute(elem.attrib["Component"]) if "Component" in elem.attrib else None
+                correction["check_out_offset"] = (t.CheckInOutOffset(int(elem.text)), comp)
+            else:
+                raise NotImplementedError(elem.tag)
+
+        key = t.Key(neighbour.get("Key", "Default"))
+        correction[key] = MPT(correction)
+
     def parse_occupancy(self, occupancy: etree._Element, occupancies: dict[t.Key, tuple[t.Occupancy, ...]]) -> None:
         update_mode = self.get_update_mode(occupancy)
         assert update_mode is not e.UpdateMode.Merge
@@ -858,15 +982,40 @@ class OTDS:
         for elem in occupancy.iterchildren():
             if elem.tag == f"{PREFIX}Person":
                 occ.append((e.Occupancy.Person, self.parse_occupancy_person(elem)))
+            elif elem.tag == f"{PREFIX}Exclude":
+                occ.append((e.Occupancy.Exclude, self.parse_occupancy_exclude(elem)))
             else:
-                raise NotImplementedError(elem.tag)
+                assert False
         key = t.Key(occupancy.attrib["Key"])
         occupancies[key] = tuple(occ)
 
-    def parse_occupancy_person(self, person: etree._Element) -> t.OccupancyPerson:
-        if person.get("MatchAvailability") is not None:
+    def parse_occupancy_condition(self, person_group: etree._Element) -> tuple[t.SourceAttribute, tuple[t.OccupancyConditionPerson, ...]]:
+        if person_group.get("DayAllocation") is not None:
+            raise NotImplementedError()
+        if person_group.get("EvaluationMode", "Any") != "Any":
             raise NotImplementedError()
 
+        persons = []
+        for elem in person_group.iterchildren():
+            assert elem.tag == f"{PREFIX}Person"
+            persons.append(self.parse_occupancy_condition_person(elem))
+
+        return (t.SourceAttribute(person_group.attrib["Source"]), tuple(persons))
+
+    def parse_occupancy_condition_person(self, person: etree._Element) -> t.OccupancyConditionPerson:
+        conds = {}
+        for elem in person.iterchildren():
+            if elem.tag == f"{PREFIX}MinAge":
+                assert elem.text
+                conds["min_age"] = t.PersonAge(int(elem.text))
+            elif elem.tag == f"{PREFIX}MinCount":
+                assert elem.text
+                conds["min_count"] = int(elem.text)
+            else:
+                raise NotImplementedError(elem.tag)
+        return MPT(conds)
+
+    def _parse_base_occupancy_person(self, person: etree._Element) -> t.OccupancyPerson:
         conds = {}
         for elem in person.iterchildren():
             if elem.tag == f"{PREFIX}Count":
@@ -878,9 +1027,28 @@ class OTDS:
             elif elem.tag == f"{PREFIX}MinAge":
                 assert elem.text
                 conds["min_age"] = t.Age(int(elem.text))
+            elif elem.tag == f"{PREFIX}MaxCount":
+                assert elem.text
+                conds["max_count"] = int(elem.text)
+            elif elem.tag == f"{PREFIX}MinCount":
+                assert elem.text
+                conds["min_count"] = int(elem.text)
             else:
                 raise NotImplementedError(elem.tag)
         return MPT(conds)
+
+    def parse_occupancy_exclude(self, exclude: etree._Element) -> tuple[t.OccupancyPerson, ...]:
+        persons = []
+        for elem in exclude.iterchildren():
+            assert elem.tag == f"{PREFIX}Person"
+            persons.append(self._parse_base_occupancy_person(elem))
+        return tuple(persons)
+
+    def parse_occupancy_person(self, person: etree._Element) -> t.OccupancyPerson:
+        if person.get("MatchAvailability") is not None:
+            raise NotImplementedError()
+
+        return self._parse_base_occupancy_person(person)
 
     def parse_oneway(self, one_way_flight: etree._Element, flights_dict: dict[t.Key, t.Oneway]) -> None:
         update_mode = self.get_update_mode(one_way_flight)
@@ -893,7 +1061,9 @@ class OTDS:
         key = t.Key(one_way_flight.attrib["Key"])
         flight = flights_dict.setdefault(key, {"booking_class": {}})
         for elem in one_way_flight.iterchildren():
-            if elem.tag == f"{PREFIX}ArrivalAirport":
+            if elem.tag == f"{PREFIX}Tags":
+                self.parse_tags(elem, flight.setdefault("tags", {}))
+            elif elem.tag == f"{PREFIX}ArrivalAirport":
                 if self.get_update_mode(elem) is not e.UpdateMode.New:
                     raise NotImplementedError()
                 assert elem.text
@@ -903,10 +1073,21 @@ class OTDS:
                     raise NotImplementedError()
                 assert elem.text
                 flight["departure"] = t.SimpleNodeIataAirportCode(elem.text)
+            elif elem.tag == f"{PREFIX}CheckOutDateOffset":
+                if self.get_update_mode(elem) is not e.UpdateMode.New:
+                    raise NotImplementedError()
+                assert elem.text
+                flight["check_out_date_offset"] = t.CheckOutDateOffset(int(elem.text))
             elif elem.tag == f"{PREFIX}Filter":
                 self.parse_filter_simple_node(elem, flight.setdefault("filter", {}))
             elif elem.tag == f"{PREFIX}BookingClass":
                 self.parse_booking_class(elem, flight["booking_class"])
+            elif elem.tag == f"{PREFIX}NeighbourComponentCorrection":
+                self.parse_neighbour_component_correction(elem, flight.setdefault("neighbour_component_correction", {}))
+            elif elem.tag == f"{PREFIX}Properties":
+                self.parse_properties(elem, flight.setdefault("properties", {}))
+            elif elem.tag == f"{PREFIX}PriceItems":
+                self.parse_price_items(elem, flight.setdefault("price_items", {}))
             else:
                 raise NotImplementedError(elem.tag)
 
@@ -920,6 +1101,18 @@ class OTDS:
         for elem in one_way_flights.iterchildren():
             assert elem.tag == f"{PREFIX}OnewayFlight"
             self.parse_oneway(elem, flights_dict)
+
+    def parse_operating(self, operating: etree._Element) -> t.Operating:
+        op: t.Operating = {}
+        for elem in operating.iterchildren():
+            if elem.tag == f"{PREFIX}Carrier":
+                _id = elem.findtext(f"{PREFIX}Identifier")
+                assert _id is not None
+                op["carrier"] = t.IataAirlineCode(_id)
+            elif elem.tag == f"{PREFIX}FlightNumber":
+                op["flight_number"] = elem.text
+            else:
+                assert False
 
     def parse_optional_bookable_addon_types(self, addon_types: etree._Element) -> tuple[t.OptionalBookableAddonType, ...]:
         if addon_types.get("Class") is not None:
@@ -1040,12 +1233,23 @@ class OTDS:
             elif elem.tag == f"{PREFIX}Indices":
                 assert elem.text
                 conds["indices"] = tuple(int(t) for t in elem.text.split())
+            elif elem.tag == f"{PREFIX}PersonFilter":
+                conds["filter"] = self.parse_person_index_filter(elem)
             elif elem.tag == f"{PREFIX}Until":
                 assert elem.text
                 conds["until"] = int(elem.text)
             else:
-                raise NotImplementedError(elem.tag)
+                assert False
         return (src, MPT(conds))
+
+    def parse_person_index_filter(self, person_filter: etree._Element) -> tuple[tuple[e.PersonIndexFilter, tuple[t.SourceAttribute, t.Token, tuple[str, ...]]], ...]:
+        conds = []
+        for elem in person_filter.iterchildren():
+            if elem.tag == f"{PREFIX}ConditionalTags":
+                conds.append((e.PersonIndexFilter.Tags, self.parse_conditional_tag_condition(elem)))
+            else:
+                raise NotImplementedError(elem.tag)
+        return tuple(conds)
 
     def parse_price_impact_absolute(self, absolute: etree._Element) -> tuple[Decimal, tuple[t.AbsoluteCondition, ...]]:
         value = None
@@ -1057,10 +1261,11 @@ class OTDS:
             elif elem.tag == f"{PREFIX}DayBase":
                 conds.append((e.Absolute.DayBase, self.parse_price_impact_base_value(elem)))
             elif elem.tag == f"{PREFIX}PersonBase":
-                if elem.text == "x":
-                    raise NotImplementedError()
                 assert elem.text
-                conds.append((e.Absolute.PersonBase, int(elem.text)))
+                if elem.text == "x":
+                    conds.append((e.Absolute.PersonBase, e.X.x))
+                else:
+                    conds.append((e.Absolute.PersonBase, int(elem.text)))
             elif elem.tag == f"{PREFIX}AppliedBy":
                 if elem.get("Component") is not None:
                     raise NotImplementedError()
@@ -1070,6 +1275,27 @@ class OTDS:
                     raise NotImplementedError()
                 assert elem.text
                 conds.append((e.Absolute.AppliedBy, elem.text))
+            else:
+                raise NotImplementedError(elem.tag)
+        assert value is not None
+        return (value, tuple(conds))
+
+    def parse_price_impact_percent(self, percent: etree._Element) -> tuple[Decimal, tuple[t.PercentCondition, ...]]:
+        value = None
+        conds: list[t.PercentCondition] = []
+        for elem in percent.iterchildren():
+            if elem.tag == f"{PREFIX}Value":
+                assert elem.text
+                value = Decimal(elem.text)
+            elif elem.tag == f"{PREFIX}ApplyTo":
+                if elem.get("Component") is not None:
+                    raise NotImplementedError()
+                if elem.get("Source") is not None:
+                    raise NotImplementedError()
+                if elem.get("LogicalRelation", "Or") != "Or":
+                    raise NotImplementedError()
+                assert elem.text
+                conds.append((e.Percent.ApplyTo, tuple(t.PriceItemClass(c) for c in elem.text.split())))
             else:
                 raise NotImplementedError(elem.tag)
         assert value is not None
@@ -1089,6 +1315,8 @@ class OTDS:
         for elem in price_item.iterchildren():
             if elem.tag == f"{PREFIX}Absolute":
                 p["absolute"] = self.parse_price_impact_absolute(elem)
+            elif elem.tag == f"{PREFIX}Percent":
+                p["percent"] = self.parse_price_impact_percent(elem)
             elif elem.tag == f"{PREFIX}Combinatorics":
                 self.parse_combinatorics(elem, p.setdefault("combinatorics", {}))
             elif elem.tag == f"{PREFIX}Condition":
@@ -1175,9 +1403,7 @@ class OTDS:
                 assert elem.text
                 city.append(t.LanguageText(elem.text))
             elif elem.tag == f"{PREFIX}AccommodationType":
-                if elem.text != "Hotel":
-                    raise NotImplementedError()
-                #property["type"] = AccommodationType(elem.text)
+                property["type"] = e.AccommodationType(elem.text)
             elif elem.tag == f"{PREFIX}AccommodationName":
                 if elem.get("lang", "de") != "de":
                     raise NotImplementedError()
@@ -1201,6 +1427,8 @@ class OTDS:
                 property["operator_category"] = tuple(value)  # type: ignore[typeddict-item]
             elif elem.tag == f"{PREFIX}AccommodationAddress":
                 self.parse_address(elem, property.setdefault("address", {}))
+            elif elem.tag == f"{PREFIX}AccomodationTargetgroups":
+                property["target_groups"] = tuple(e.AccommodationTargetgroup(t) for t in elem.text.split())
             elif elem.tag == f"{PREFIX}BoardName":
                 if elem.get("lang", "de") != "de":
                     raise NotImplementedError()
@@ -1210,19 +1438,23 @@ class OTDS:
                 property["board_name"] = t.LanguageText(elem.text)
             elif elem.tag == f"{PREFIX}BoardType":
                 property["board_type"] = e.BoardType(elem.text)
+            elif elem.tag == f"{PREFIX}FlightBookingClassBaggageAllowances":
+                property["baggage_allowances"] = self.parse_baggage_allowance(elem)
+            elif elem.tag == f"{PREFIX}FlightRoutes":
+                property["flight_routes"] = tuple(self.parse_route(el) for el in elem.iterchildren())
             elif elem.tag == f"{PREFIX}UnitFacilities":
                 assert elem.text
                 property["unit_facilities"] = tuple(e.UnitFacilities(t) for t in elem.text.split())
             elif elem.tag == f"{PREFIX}UnitName":
-                if elem.get("lang", "de") != "de":
-                    raise NotImplementedError()
-                if "unit_name" in property:
-                    raise NotImplementedError()
-                assert elem.text
-                property["unit_name"] = t.LanguageText(elem.text)
+                if elem.text:  # Nonsensical to have an empty tag, but have seen them.
+                    if elem.get("lang", "de") != "de":
+                        raise NotImplementedError()
+                    if "unit_name" in property:
+                        raise NotImplementedError()
+                    property["unit_name"] = t.LanguageText(elem.text)
             elif elem.tag == f"{PREFIX}UnitType":
-                assert elem.text
-                property["unit_types"] = tuple(e.UnitType(t) for t in elem.text.split())
+                if elem.text:  # Empty tag is nonsensical, but have seen them used.
+                    property["unit_types"] = tuple(e.UnitType(t) for t in elem.text.split())
             elif elem.tag == f"{PREFIX}GeneralIncludedServices":
                 property["included_services"] = self.parse_general_included_services(elem)
             elif elem.tag == f"{PREFIX}Condition":
@@ -1236,6 +1468,37 @@ class OTDS:
         if city:
             property["city"] = tuple(city)
         return MPT(property)
+
+    def parse_route(self, route: etree._Element) -> t.Route:
+        details: t.Route = {}
+        for elem in route.iterchildren():
+            if elem.tag == f"{PREFIX}Arrival":
+                details["arrival"] = self.parse_route_node(elem)
+            elif elem.tag == f"{PREFIX}Departure":
+                details["departure"] = self.parse_route_node(elem)
+            elif elem.tag == f"{PREFIX}Operating":
+                details["operating"] = self.parse_operating(elem)
+            elif elem.tag == f"{PREFIX}StopOvers":
+                assert elem.text
+                details["stop_overs"] = int(elem.text)
+            else:
+                raise NotImplementedError(elem.tag)
+        return MPT(details)
+
+    def parse_route_node(self, route_node: etree._Element) -> t.RouteNode:
+        route: t.RouteNode = {}
+        for elem in route_node.iterchildren():
+            if elem.tag == f"{PREFIX}Airport":
+                route["airport"] = t.IataAirportCode(elem.text)
+            elif elem.tag == f"{PREFIX}DateOffset":
+                route["date_offset"] = int(elem.text)
+            elif elem.tag == f"{PREFIX}Time":
+                if elem.get("UTCOffsetOfTimeZone") is not None:
+                    raise NotImplementedError()
+                route["time"] = datetime.time.fromisoformat(elem.text)
+            else:
+                raise NotImplementedError(elem.tag)
+        return MPT(route)
 
     def parse_rule_accommodation_component(self, component: etree._Element, product_type: e.ProductType) -> tuple[t.RuleSellingAccomComponent, ...]:
         _name = component.get("Name")
@@ -1363,11 +1626,9 @@ class OTDS:
         key = t.Key(selling_unit.attrib["Key"])
         selling[key] = MPT(sell)
 
-    def parse_tag_condition(self, tags: etree._Element) -> tuple[t.SourceAttribute, t.Token, tuple[str, ...], t.StringSlice]:
-        if tags.get("DayAllocation", "All") != "All":  # Do not understand: The Default is "All" if the condition is not one of the following:
-            raise NotImplementedError()
-        if tags.get("EvaluationMode", "Any") != "Any":
-            raise NotImplementedError()
+    def parse_tag_condition(self, tags: etree._Element) -> tuple[t.SourceAttribute, t.Token, tuple[str, ...], t.StringSlice, e.EvaluationMode, e.DayAllocation]:
+        day_alloc = e.DayAllocation(tags.get("DayAllocation", "All"))  # Do not understand: The Default is "All" if the condition is not one of the following:
+        ev = tags.get("EvaluationMode", "Any")
         src = t.SourceAttribute(tags.attrib["Source"])
         # Convert these to slice indexes, so they can be compared with value[start:end].
         start = int(tags.get("Offset", 0))
@@ -1375,7 +1636,7 @@ class OTDS:
         end = None if length is None else start + int(length)
         slc = t.StringSlice((start, end))
         assert tags.text
-        return (src, t.Token(tags.attrib["Class"]), tuple(tags.text.split()), slc)
+        return (src, t.Token(tags.attrib["Class"]), tuple(tags.text.split()), slc, ev, day_alloc)
 
     def parse_tag(self, tag: etree._Element) -> tuple[t.Token, str]:
         if tag.get("TagValueType", "String") != "String":
@@ -1418,6 +1679,13 @@ class OTDS:
                 raise NotImplementedError(elem.tag)
         key = t.Key(unit.attrib["Key"])
         unit_dict[key] = MPT(u)
+
+    def parse_weekday_condition(self, weekdays: etree._Element) -> tuple[t.SourceAttribute, e.DayType, tuple[e.Weekday, ...]]:
+        source = t.SourceAttribute(weekdays.attrib["Source"])
+        day_type = e.DayType(weekdays.get("DayType", "CheckIn"))
+        assert weekdays.text
+        days = tuple(e.Weekday(d) for d in weekdays.text.split())
+        return (source, day_type, days)
 
     def get_update_mode(self, elem: etree._Element) -> e.UpdateMode:
         return e.UpdateMode(elem.get("UpdateMode", "New"))
